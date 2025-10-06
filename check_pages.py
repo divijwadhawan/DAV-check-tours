@@ -1,7 +1,5 @@
-import hashlib
 import requests
 import os
-import json
 from datetime import datetime
 
 # --- CONFIGURATION ---
@@ -15,37 +13,25 @@ URLS = [
     "https://www.alpenverein-muenchen-oberland.de/alpinprogramm/sommer/klettern-alpin/keile-friends-co"
 ]
 
+# Text to check for
+TARGET_TEXT = "Leider haben wir momentan keine Veranstaltungen dieser Art im Angebot"
+
+# Telegram bot setup
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-HASH_FILE = "page_hashes.json"
 
 
 # --- FUNCTIONS ---
 
-def get_page_hash(url):
-    """Fetch page and return SHA256 hash."""
+def check_page_for_text(url, target_text):
+    """Return True if target_text is present, False if not."""
     try:
         response = requests.get(url, timeout=15)
         response.raise_for_status()
-        return hashlib.sha256(response.text.encode("utf-8")).hexdigest()
+        return target_text in response.text
     except Exception as e:
         print(f"❌ Error fetching {url}: {e}")
-        return None
-
-
-def load_hashes():
-    """Load previous page hashes."""
-    if not os.path.exists(HASH_FILE):
-        return {}
-    with open(HASH_FILE, "r") as f:
-        return json.load(f)
-
-
-def save_hashes(hashes):
-    """Save page hashes."""
-    with open(HASH_FILE, "w") as f:
-        json.dump(hashes, f, indent=2)
+        return None  # None means failed
 
 
 def send_telegram_message(message):
@@ -65,34 +51,27 @@ def send_telegram_message(message):
 
 def main():
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    old_hashes = load_hashes()
-    new_hashes = {}
-    changed_urls = []
-    failed_urls = []
+    pages_missing_text = []
+    pages_checked = []
+    failed_pages = []
 
     for url in URLS:
-        h = get_page_hash(url)
-        if not h:
-            failed_urls.append(url)
-            continue
-        old_hash = old_hashes.get(url)
-        new_hashes[url] = h
+        result = check_page_for_text(url, TARGET_TEXT)
+        if result is None:
+            failed_pages.append(url)
+        elif not result:  # target text not found
+            pages_missing_text.append(url)
+        pages_checked.append(url)
 
-        if old_hash and old_hash != h:
-            changed_urls.append(url)
-
-    # Save latest hashes
-    save_hashes(new_hashes)
-
-    # --- Build Telegram message ---
-    if changed_urls:
-        msg = f"⚠️ Website changes detected at {timestamp}\n\n"
-        msg += "\n".join([f"• {url}" for url in changed_urls])
+    # Build Telegram message
+    if pages_missing_text:
+        msg = f"⚠️ Target text removed from the following pages ({timestamp}):\n"
+        msg += "\n".join([f"• {url}" for url in pages_missing_text])
     else:
-        msg = f"✅ No changes detected at {timestamp}.\nAll {len(URLS)} pages checked successfully."
+        msg = f"✅ Target text still present on all pages ({timestamp})."
 
-    if failed_urls:
-        msg += "\n\n⚠️ Failed to fetch:\n" + "\n".join([f"• {url}" for url in failed_urls])
+    if failed_pages:
+        msg += "\n\n⚠️ Failed to fetch:\n" + "\n".join([f"• {url}" for url in failed_pages])
 
     print(msg)
     send_telegram_message(msg)
