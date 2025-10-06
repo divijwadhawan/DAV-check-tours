@@ -13,7 +13,6 @@ URLS = [
     "https://www.alpenverein-muenchen-oberland.de/alpinprogramm/sommer/klettern-alpin/keile-friends-co"
 ]
 
-# Text to check for
 TARGET_TEXT = "Leider haben wir momentan keine Veranstaltungen dieser Art im Angebot"
 
 # Telegram bot setup
@@ -52,7 +51,6 @@ def send_telegram_message(message):
 def main():
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     pages_missing_text = []
-    pages_checked = []
     failed_pages = []
 
     for url in URLS:
@@ -61,20 +59,17 @@ def main():
             failed_pages.append(url)
         elif not result:  # target text not found
             pages_missing_text.append(url)
-        pages_checked.append(url)
 
-    # Build Telegram message
+    # Only send notification if target text is removed on any page
     if pages_missing_text:
         msg = f"⚠️ Target text removed from the following pages ({timestamp}):\n"
         msg += "\n".join([f"• {url}" for url in pages_missing_text])
+        if failed_pages:
+            msg += "\n\n⚠️ Failed to fetch:\n" + "\n".join([f"• {url}" for url in failed_pages])
+        print(msg)
+        send_telegram_message(msg)
     else:
-        msg = f"✅ Target text still present on all pages ({timestamp})."
-
-    if failed_pages:
-        msg += "\n\n⚠️ Failed to fetch:\n" + "\n".join([f"• {url}" for url in failed_pages])
-
-    print(msg)
-    send_telegram_message(msg)
+        print(f"✅ Target text still present on all pages ({timestamp}). No notification sent.")
 
 
 if __name__ == "__main__":
