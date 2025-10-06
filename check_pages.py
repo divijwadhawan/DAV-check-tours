@@ -2,6 +2,7 @@ import hashlib
 import requests
 import os
 import json
+from datetime import datetime
 
 # --- CONFIGURATION ---
 
@@ -17,7 +18,6 @@ URLS = [
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# We'll store previous hashes in a JSON file that persists in the repo
 HASH_FILE = "page_hashes.json"
 
 
@@ -64,13 +64,16 @@ def send_telegram_message(message):
 # --- MAIN ---
 
 def main():
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     old_hashes = load_hashes()
     new_hashes = {}
     changed_urls = []
+    failed_urls = []
 
     for url in URLS:
         h = get_page_hash(url)
         if not h:
+            failed_urls.append(url)
             continue
         old_hash = old_hashes.get(url)
         new_hashes[url] = h
@@ -78,15 +81,21 @@ def main():
         if old_hash and old_hash != h:
             changed_urls.append(url)
 
-    if changed_urls:
-        for url in changed_urls:
-            msg = f"⚠️ Change detected on {url}"
-            print(msg)
-            send_telegram_message(msg)
-    else:
-        print("✅ No changes detected.")
-
+    # Save latest hashes
     save_hashes(new_hashes)
+
+    # --- Build Telegram message ---
+    if changed_urls:
+        msg = f"⚠️ Website changes detected at {timestamp}\n\n"
+        msg += "\n".join([f"• {url}" for url in changed_urls])
+    else:
+        msg = f"✅ No changes detected at {timestamp}.\nAll {len(URLS)} pages checked successfully."
+
+    if failed_urls:
+        msg += "\n\n⚠️ Failed to fetch:\n" + "\n".join([f"• {url}" for url in failed_urls])
+
+    print(msg)
+    send_telegram_message(msg)
 
 
 if __name__ == "__main__":

@@ -20,14 +20,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run script
+      - name: Run website check
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python check_pages.py
 
-      # Optional: Commit updated hashes so they persist
-      - name: Save hash file
+      # Optional: Commit updated hash file to persist history
+      - name: Commit updated hashes
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
