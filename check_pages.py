@@ -1,6 +1,7 @@
 import hashlib
 import requests
 import os
+import json
 
 # --- CONFIGURATION ---
 
@@ -13,12 +14,11 @@ URLS = [
     "https://www.alpenverein-muenchen-oberland.de/alpinprogramm/sommer/klettern-alpin/keile-friends-co"
 ]
 
-# Telegram bot setup
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Persistent hash file (Render mounts /data for persistent storage)
-HASH_FILE = "/data/page_hashes.txt"
+# We'll store previous hashes in a JSON file that persists in the repo
+HASH_FILE = "page_hashes.json"
 
 
 # --- FUNCTIONS ---
@@ -35,27 +35,24 @@ def get_page_hash(url):
 
 
 def load_hashes():
-    """Load previous hashes if available."""
+    """Load previous page hashes."""
     if not os.path.exists(HASH_FILE):
         return {}
-    hashes = {}
     with open(HASH_FILE, "r") as f:
-        for line in f:
-            url, page_hash = line.strip().split(" ", 1)
-            hashes[url] = page_hash
-    return hashes
+        return json.load(f)
 
 
 def save_hashes(hashes):
-    """Save updated hashes."""
-    os.makedirs(os.path.dirname(HASH_FILE), exist_ok=True)
+    """Save page hashes."""
     with open(HASH_FILE, "w") as f:
-        for url, h in hashes.items():
-            f.write(f"{url} {h}\n")
+        json.dump(hashes, f, indent=2)
 
 
 def send_telegram_message(message):
-    """Send a Telegram message."""
+    """Send Telegram notification."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("⚠️ Missing Telegram credentials.")
+        return
     try:
         api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         params = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
@@ -64,13 +61,9 @@ def send_telegram_message(message):
         print(f"⚠️ Error sending Telegram message: {e}")
 
 
-# --- MAIN SCRIPT ---
+# --- MAIN ---
 
 def main():
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID env vars")
-        return
-
     old_hashes = load_hashes()
     new_hashes = {}
     changed_urls = []
