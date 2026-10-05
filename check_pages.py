@@ -46,6 +46,9 @@ def parse_page(soup, url):
     scope = soup.select_one('.namespace_WOdavTourList')
     children = []
     for a in scope.select('li.linked > a[href]'):
+        count = a.parent.select_one('.tour-list-count')
+        if count and text(count) == '0':
+            continue  # DAV marks empty categories; avoid crawling historical-only pages.
         link = urljoin(url, a['href'])
         if urlsplit(link).netloc == urlsplit(URL).netloc and not parse_qs(urlsplit(link).query).get('tour'):
             children.append(link)
