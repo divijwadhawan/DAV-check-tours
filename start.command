@@ -3,4 +3,4 @@ set -e
 cd "$(dirname "$0")"
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-caffeinate -i .venv/bin/python -u check_pages.py
+caffeinate -i .venv/bin/python -u dashboard.py
