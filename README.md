@@ -10,7 +10,7 @@ Download/clone this branch, then in Terminal inside the project:
 bash start.command
 ```
 
-Requires Python 3 (`python3 --version`). The launcher creates a virtual environment, installs dependencies and uses macOS `caffeinate` to prevent idle sleep while running. Keep the laptop lid open and internet connected. Stop with Ctrl+C. Run again after restarting your laptop; this does not install an automatic login service.
+Requires Python 3 (`python3 --version`). The launcher creates a virtual environment, installs dependencies and uses macOS `caffeinate` to prevent idle sleep while running. Keep the laptop lid open and internet connected. The launcher opens a dashboard at http://127.0.0.1:8765 with search, course and date filters, DAV links, and CSV download. It refreshes the local list every 15 seconds. The dashboard starts immediately while the first scan runs. Stop with Ctrl+C. Run again after restarting your laptop; this does not install an automatic login service.
 
 Alternatively:
 
@@ -37,3 +37,7 @@ Subsequent lightweight checks compare the programme announcement and top-level c
 This detects publication through announcement/count changes, not an official launch API. A change replacing events without changing those indicators can be missed; use `--refresh` to force a complete scan. The launch announcement alone is not treated as proof of availability. The DAV page currently announces 7 October 2026 for the 2026/2027 programme.
 
 The old GitHub workflow is changed to manual-only and performs a single check. Routine polling now happens locally. Existing Telegram secrets and the old `page_hashes.json` are not used.
+
+## Dashboard only / manual launch
+
+`.venv/bin/python dashboard.py` starts both the local dashboard and monitor. The server binds only to 127.0.0.1. Date filtering matches the DAV date text; entering 2027 matches 27. Status colours are labelled as indicators rather than assuming bookability.
