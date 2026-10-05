@@ -1,6 +1,6 @@
 # Local DAV Alpinprogramm monitor
 
-Checks https://www.alpenverein-muenchen-oberland.de/alpinprogramm every 120 seconds while running on your laptop. No Telegram, login or hosted service required.
+Checks https://www.alpenverein-muenchen-oberland.de/alpinprogramm every 120 seconds while running on your laptop. No login or hosted service required. Telegram push is optional and can reuse your existing bot.
 
 ## macOS: start
 
@@ -36,7 +36,7 @@ Subsequent lightweight checks compare the programme announcement and top-level c
 
 This detects publication through announcement/count changes, not an official launch API. A change replacing events without changing those indicators can be missed; use `--refresh` to force a complete scan. The launch announcement alone is not treated as proof of availability. The DAV page currently announces 7 October 2026 for the 2026/2027 programme.
 
-The old GitHub workflow is changed to manual-only and performs a single check. Routine polling now happens locally. Existing Telegram secrets and the old `page_hashes.json` are not used.
+The old GitHub workflow is changed to manual-only and performs a single check. Routine polling now happens locally. GitHub Telegram secrets are not available locally. Use the local Telegram configuration below. The old `page_hashes.json` is not used.
 
 ## Dashboard only / manual launch
 
@@ -53,3 +53,15 @@ CLI alternative: `.venv/bin/python check_pages.py --test-winter`. Results: `outp
 Exports include `start_date`, `end_date` (ISO dates), `days` (inclusive calendar span), `date_note`, `cost_eur` and `cost_note`. Multi-session and recurring programmes retain the original DAV date text. Days does not claim the number of attended sessions and includes school-holiday exclusions in the overall span. Cost is the first listed price, for DAV München & Oberland members; missing prices stay blank.
 
 Select **Main programme** or **Winter test results** in the dashboard to display the relevant CSV. Old exports receive date parsing in the dashboard; rerun the winter test to retrieve prices. Updating to this schema triggers a fresh main export automatically. CSV edits become visible on refresh; Excel must save back to the CSV rather than a separate XLSX file.
+
+## Automatic Telegram push with your existing bot
+
+1. Copy the example: `cp telegram_config.example.json telegram_config.json`.
+2. Open `telegram_config.json` in a text editor and replace the placeholders with your existing bot token and chat ID. Keep the quotes. This file is ignored by git.
+3. Send `/start` to your bot in Telegram if you have not already done so.
+4. Test: `.venv/bin/python check_pages.py --test-telegram`.
+5. Start normally: `bash start.command`.
+
+Environment variables `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` also work and override the file. Existing GitHub secret values cannot be downloaded; use your saved credentials or recover the bot token from BotFather. Never paste the token into GitHub code or screenshots.
+
+Automatic scans queue a Telegram message when a programme refresh discovers new event URLs relative to the saved baseline. Messages include the programme link, new course count, and sample dates/prices. The first baseline and winter tests do not send publication alerts. Failed deliveries remain in a local outbox and retry on subsequent checks, including after restart. Confirmed deliveries are remembered; an ambiguous network timeout can cause a duplicate on retry. The monitor must remain running and online. Announcement/category-count detection limitations still apply; the message reports newly published dates rather than claiming an official launch signal.
