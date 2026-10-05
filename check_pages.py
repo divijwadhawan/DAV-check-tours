@@ -1,76 +1,200 @@
-import requests
-import os
+"""Local DAV programme monitor; no accounts or Telegram required."""
+import argparse
+import csv
+import hashlib
+import json
+import platform
+import subprocess
+import time
+from collections import deque
 from datetime import datetime
+from pathlib import Path
+from urllib.parse import urljoin, urlsplit, parse_qs
 
-# --- CONFIGURATION ---
+import requests
+from bs4 import BeautifulSoup
+from course_dates import extract_dates, extract_price
+import telegram_push
 
-URLS = [
-    "https://www.alpenverein-muenchen-oberland.de/alpinprogramm/sommer/hochtouren/grundkurs-hochtouren",
-    "https://www.alpenverein-muenchen-oberland.de/alpinprogramm/winter/wasserfalleisklettern/grundkurs-wasserfalleisklettern",
-    "https://www.alpenverein-muenchen-oberland.de/alpinprogramm/winter/skischule/nordic-classic/nordic-classic-fuer-einsteiger",
-    "https://www.alpenverein-muenchen-oberland.de/alpinprogramm/sommer/klettern-alpin/grundkurs-klettern-alpin",
-    "https://www.alpenverein-muenchen-oberland.de/alpinprogramm/sommer/wildwasserkajak/schnupperkurs-kajak-wildwasser",
-    "https://www.alpenverein-muenchen-oberland.de/alpinprogramm/sommer/klettern-alpin/keile-friends-co"
-]
-
-TARGET_TEXT = "Leider haben wir momentan keine Veranstaltungen dieser Art im Angebot"
-
-# Telegram bot setup
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+URL = 'https://www.alpenverein-muenchen-oberland.de/alpinprogramm'
+HOME = Path(__file__).resolve().parent
+OUT = HOME / 'output'
+STATE = OUT / 'state.json'
 
 
-# --- FUNCTIONS ---
-
-def check_page_for_text(url, target_text):
-    """Return True if target_text is present, False if not."""
-    try:
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        return target_text in response.text
-    except Exception as e:
-        print(f"❌ Error fetching {url}: {e}")
-        return None  # None means failed
+def text(node):
+    return node.get_text(' ', strip=True) if node else ''
 
 
-def send_telegram_message(message):
-    """Send Telegram notification."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ Missing Telegram credentials.")
-        return
-    try:
-        api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        params = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
-        requests.get(api_url, params=params, timeout=10)
-    except Exception as e:
-        print(f"⚠️ Error sending Telegram message: {e}")
+def fetch(session, url):
+    response = session.get(url, timeout=30)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.content, 'html.parser')
+    if not soup.select_one('.namespace_WOdavTourList'):
+        raise ValueError(f'Expected DAV programme markup missing: {url}')
+    return soup
 
 
-# --- MAIN ---
+def signature(soup):
+    # Ignore navigation, changing free-place recommendations and other unrelated content.
+    notices = [text(n) for n in soup.select('.article_infobox') if 'alpinprogramm' in text(n).lower()]
+    counts = [text(n) for n in soup.select('#tour-list-container .tour-list-count')]
+    if not counts:
+        raise ValueError('Programme category counts missing; keeping previous state')
+    return hashlib.sha256(json.dumps([notices, counts], ensure_ascii=False).encode()).hexdigest()
+
+
+def parse_page(soup, url):
+    scope = soup.select_one('.namespace_WOdavTourList')
+    children = []
+    for a in scope.select('li.linked > a[href]'):
+        count = a.parent.select_one('.tour-list-count')
+        if count and text(count) == '0':
+            continue  # DAV marks empty categories; avoid crawling historical-only pages.
+        link = urljoin(url, a['href'])
+        if urlsplit(link).netloc == urlsplit(URL).netloc and not parse_qs(urlsplit(link).query).get('tour'):
+            children.append(link)
+    rows = []
+    heading = text(soup.select_one('#tour-list-crumbtrail-current')) or text(soup.select_one('h1'))
+    for entry in scope.select('.tour-entries .tour-entry-container'):
+        if entry.find_parent(class_='oldeventsAccordion'):
+            continue
+        a = entry.find_parent('a', href=True)
+        dates = text(entry.select_one('.tour-dates__datum'))
+        if not a or not dates:
+            raise ValueError(f'Course row missing date/link: {url}')
+        link = urljoin(url, a['href'])
+        code = text(entry.select_one('.tour-postcode'))
+        title = text(entry.select_one('.tour-subtitle'))
+        if code:
+            title = title.replace(code, '').strip()
+        status = entry.select_one('.tour-status')
+        rows.append({'course': title or heading, 'dates': dates,
+                     'location': text(entry.select_one('.tour-title__headline')),
+                     **extract_dates(dates), **extract_price(entry),
+                     'code': code, 'status': text(status) or (' '.join(status.get('class', [])) if status else 'unknown'),
+                     'url': link})
+    return children, rows
+
+
+def collect(session, root, start_url=URL):
+    queue = deque([(start_url, root)])
+    visited, courses = set(), {}
+    while queue:
+        url, soup = queue.popleft()
+        if url in visited:
+            continue
+        visited.add(url)
+        if len(visited) > 2000:
+            raise ValueError('Unexpectedly large crawl; no partial export saved')
+        if soup is None:
+            time.sleep(0.3)
+            soup = fetch(session, url)
+        children, rows = parse_page(soup, url)
+        for row in rows:
+            courses[row['url']] = row
+        queue.extend((child, None) for child in children if child not in visited)
+        print(f'\rReading programme: {len(visited)} pages, {len(courses)} dates', end='', flush=True)
+    print()
+    if not courses:
+        raise ValueError('No current dated events found; no state saved')
+    return sorted(courses.values(), key=lambda r: (r['course'], r['dates'], r['code']))
+
+
+def save(rows, name="courses"):
+    OUT.mkdir(exist_ok=True)
+    path = OUT / f'{name}.csv'
+    temp = path.with_suffix('.tmp')
+    with temp.open('w', encoding='utf-8-sig', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    temp.replace(path)
+    (OUT / f'{name}.json').write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding='utf-8')
+    return path
+
+
+def notify(message):
+    print('\a' + message, flush=True)
+    if platform.system() == 'Darwin':
+        # Pass message as argv; never interpolate website content into AppleScript.
+        script = 'on run argv\ndisplay notification (item 1 of argv) with title "DAV Alpinprogramm"\nend run'
+        subprocess.run(['osascript', '-e', script, message], check=False)
+
 
 def main():
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    pages_missing_text = []
-    failed_pages = []
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--once', action='store_true', help='Check once and exit')
+    parser.add_argument('--refresh', action='store_true', help='Force a full course export on the first check')
+    parser.add_argument('--test-winter', action='store_true', help='Export winter course dates without modifying the main baseline')
+    parser.add_argument('--test-telegram', action='store_true', help='Send a clearly labelled test message to your configured Telegram chat')
+    args = parser.parse_args()
+    if args.test_telegram:
+        try:
+            telegram_push.send('DAV monitor TEST: Telegram push is working. This is a test; the new Alpinprogramm has not been confirmed live.')
+            print('Telegram test message delivered.')
+            return
+        except (ValueError, OSError) as e:
+            print(e)
+            raise SystemExit(1)
+    session = requests.Session()
+    session.headers['User-Agent'] = 'DAV-local-programme-monitor/1.0'
+    if args.test_winter:
+        winter_url = URL + '/winter'
+        try:
+            rows = collect(session, fetch(session, winter_url), winter_url)
+            path = save(rows, 'winter_test')
+            notify(f'Winter test passed: {len(rows)} published dates. List: {path}')
+            return
+        except (requests.RequestException, ValueError, OSError) as e:
+            print(f'Winter test failed: {e}', flush=True)
+            raise SystemExit(1)
+    print('Checking DAV every 120 seconds. Stop with Ctrl+C. Keep laptop awake and online.')
+    force = args.refresh
+    try:
+        while True:
+            started = time.monotonic()
+            try:
+                telegram_push.deliver_pending()
+                state = json.loads(STATE.read_text()) if STATE.exists() else {}
+                soup = fetch(session, URL)
+                current = signature(soup)
+                if force or state.get('signature') != current or state.get('schema_version') != 2:
+                    baseline = not state
+                    print('Creating initial course list.' if baseline else 'Programme announcement or category counts changed. Refreshing courses.')
+                    rows = collect(session, soup)
+                    path = save(rows)
+                    old = set(state.get('course_urls', []))
+                    added = [r for r in rows if r['url'] not in old]
+                    if not baseline and added:
+                        save_new = OUT / 'new_courses.csv'
+                        with save_new.open('w', encoding='utf-8-sig', newline='') as f:
+                            writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+                            writer.writeheader()
+                            writer.writerows(added)
+                        telegram_push.queue(telegram_push.programme_message(added))
+                        telegram_push.deliver_pending()
+                        notify(f'{len(added)} newly listed dates. Course list: {path}')
+                        for row in added:
+                            print(f"{row['course']} | {row['dates']} | {row['url']}")
+                    elif baseline:
+                        print(f'Initial list: {len(rows)} dated events saved to {path}. These are the currently published events, not a new-launch alert.')
+                    else:
+                        print(f'List refreshed: {len(rows)} dated events. No newly listed dates.')
+                    temp = STATE.with_suffix('.tmp')
+                    temp.write_text(json.dumps({'schema_version': 2, 'signature': current, 'course_urls': [r['url'] for r in rows], 'checked': datetime.now().isoformat()}))
+                    temp.replace(STATE)
+                    force = False
+                else:
+                    print(f'{datetime.now():%Y-%m-%d %H:%M:%S}: programme unchanged.', flush=True)
+            except (requests.RequestException, ValueError, OSError) as e:
+                print(f'Check failed; will retry without replacing previous state: {e}', flush=True)
+            if args.once:
+                break
+            time.sleep(max(0, 120 - (time.monotonic() - started)))
+    except KeyboardInterrupt:
+        print('\nMonitor stopped.')
 
-    for url in URLS:
-        result = check_page_for_text(url, TARGET_TEXT)
-        if result is None:
-            failed_pages.append(url)
-        elif not result:  # target text not found
-            pages_missing_text.append(url)
 
-    # Only send notification if target text is removed on any page
-    if pages_missing_text:
-        msg = f"⚠️ Target text removed from the following pages ({timestamp}):\n"
-        msg += "\n".join([f"• {url}" for url in pages_missing_text])
-        if failed_pages:
-            msg += "\n\n⚠️ Failed to fetch:\n" + "\n".join([f"• {url}" for url in failed_pages])
-        print(msg)
-        send_telegram_message(msg)
-    else:
-        print(f"✅ Target text still present on all pages ({timestamp}). No notification sent.")
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
