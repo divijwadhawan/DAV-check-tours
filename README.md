@@ -41,3 +41,9 @@ The old GitHub workflow is changed to manual-only and performs a single check. R
 ## Dashboard only / manual launch
 
 `.venv/bin/python dashboard.py` starts both the local dashboard and monitor. The server binds only to 127.0.0.1. Date filtering matches the DAV date text; entering 2027 matches 27. Status colours are labelled as indicators rather than assuming bookability.
+
+## Test winter programme
+
+Click **Test winter programme** in the dashboard to scan https://www.alpenverein-muenchen-oberland.de/alpinprogramm/winter and its categories. The dashboard reports the number of extracted dates and offers a separate winter CSV download. Tests can take several minutes and show fetch/parse failures explicitly. A successful test proves the winter crawl and date extraction work with the current site; it does not claim the new season has launched. The test uses the same parser but never changes `state.json`, the main course list or launch detection. It also emits a test notification on macOS.
+
+CLI alternative: `.venv/bin/python check_pages.py --test-winter`. Results: `output/winter_test.csv` and `output/winter_test.json`.
