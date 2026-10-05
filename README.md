@@ -47,3 +47,9 @@ The old GitHub workflow is changed to manual-only and performs a single check. R
 Click **Test winter programme** in the dashboard to scan https://www.alpenverein-muenchen-oberland.de/alpinprogramm/winter and its categories. The dashboard reports the number of extracted dates and offers a separate winter CSV download. Tests can take several minutes and show fetch/parse failures explicitly. A successful test proves the winter crawl and date extraction work with the current site; it does not claim the new season has launched. The test uses the same parser but never changes `state.json`, the main course list or launch detection. It also emits a test notification on macOS.
 
 CLI alternative: `.venv/bin/python check_pages.py --test-winter`. Results: `output/winter_test.csv` and `output/winter_test.json`.
+
+## Structured dates and costs
+
+Exports include `start_date`, `end_date` (ISO dates), `days` (inclusive calendar span), `date_note`, `cost_eur` and `cost_note`. Multi-session and recurring programmes retain the original DAV date text. Days does not claim the number of attended sessions and includes school-holiday exclusions in the overall span. Cost is the first listed price, for DAV München & Oberland members; missing prices stay blank.
+
+Select **Main programme** or **Winter test results** in the dashboard to display the relevant CSV. Old exports receive date parsing in the dashboard; rerun the winter test to retrieve prices. Updating to this schema triggers a fresh main export automatically. CSV edits become visible on refresh; Excel must save back to the CSV rather than a separate XLSX file.
