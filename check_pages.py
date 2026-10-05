@@ -71,8 +71,8 @@ def parse_page(soup, url):
     return children, rows
 
 
-def collect(session, root):
-    queue = deque([(URL, root)])
+def collect(session, root, start_url=URL):
+    queue = deque([(start_url, root)])
     visited, courses = set(), {}
     while queue:
         url, soup = queue.popleft()
@@ -95,16 +95,16 @@ def collect(session, root):
     return sorted(courses.values(), key=lambda r: (r['course'], r['dates'], r['code']))
 
 
-def save(rows):
+def save(rows, name="courses"):
     OUT.mkdir(exist_ok=True)
-    path = OUT / 'courses.csv'
+    path = OUT / f'{name}.csv'
     temp = path.with_suffix('.tmp')
     with temp.open('w', encoding='utf-8-sig', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
     temp.replace(path)
-    (OUT / 'courses.json').write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding='utf-8')
+    (OUT / f'{name}.json').write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding='utf-8')
     return path
 
 
@@ -120,9 +120,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--once', action='store_true', help='Check once and exit')
     parser.add_argument('--refresh', action='store_true', help='Force a full course export on the first check')
+    parser.add_argument('--test-winter', action='store_true', help='Export winter course dates without modifying the main baseline')
     args = parser.parse_args()
     session = requests.Session()
     session.headers['User-Agent'] = 'DAV-local-programme-monitor/1.0'
+    if args.test_winter:
+        winter_url = URL + '/winter'
+        try:
+            rows = collect(session, fetch(session, winter_url), winter_url)
+            path = save(rows, 'winter_test')
+            notify(f'Winter test passed: {len(rows)} published dates. List: {path}')
+            return
+        except (requests.RequestException, ValueError, OSError) as e:
+            print(f'Winter test failed: {e}', flush=True)
+            raise SystemExit(1)
     print('Checking DAV every 120 seconds. Stop with Ctrl+C. Keep laptop awake and online.')
     force = args.refresh
     try:
