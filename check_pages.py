@@ -14,6 +14,7 @@ from urllib.parse import urljoin, urlsplit, parse_qs
 import requests
 from bs4 import BeautifulSoup
 from course_dates import extract_dates, extract_price
+import telegram_push
 
 URL = 'https://www.alpenverein-muenchen-oberland.de/alpinprogramm'
 HOME = Path(__file__).resolve().parent
@@ -126,7 +127,16 @@ def main():
     parser.add_argument('--once', action='store_true', help='Check once and exit')
     parser.add_argument('--refresh', action='store_true', help='Force a full course export on the first check')
     parser.add_argument('--test-winter', action='store_true', help='Export winter course dates without modifying the main baseline')
+    parser.add_argument('--test-telegram', action='store_true', help='Send a clearly labelled test message to your configured Telegram chat')
     args = parser.parse_args()
+    if args.test_telegram:
+        try:
+            telegram_push.send('DAV monitor TEST: Telegram push is working. This is a test; the new Alpinprogramm has not been confirmed live.')
+            print('Telegram test message delivered.')
+            return
+        except (ValueError, OSError) as e:
+            print(e)
+            raise SystemExit(1)
     session = requests.Session()
     session.headers['User-Agent'] = 'DAV-local-programme-monitor/1.0'
     if args.test_winter:
@@ -145,6 +155,7 @@ def main():
         while True:
             started = time.monotonic()
             try:
+                telegram_push.deliver_pending()
                 state = json.loads(STATE.read_text()) if STATE.exists() else {}
                 soup = fetch(session, URL)
                 current = signature(soup)
@@ -161,6 +172,8 @@ def main():
                             writer = csv.DictWriter(f, fieldnames=list(rows[0]))
                             writer.writeheader()
                             writer.writerows(added)
+                        telegram_push.queue(telegram_push.programme_message(added))
+                        telegram_push.deliver_pending()
                         notify(f'{len(added)} newly listed dates. Course list: {path}')
                         for row in added:
                             print(f"{row['course']} | {row['dates']} | {row['url']}")
