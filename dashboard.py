@@ -7,6 +7,8 @@ import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+from course_dates import extract_dates
 
 ROOT = Path(__file__).resolve().parent
 TEST_LOCK = threading.Lock()
@@ -29,12 +31,16 @@ def winter_test():
         TEST.update(update)
 
 
-def read_courses():
-    path = ROOT / 'output/courses.csv'
+def read_courses(source="main"):
+    path = ROOT / ("output/winter_test.csv" if source == "winter" else "output/courses.csv")
     if not path.exists():
         return [], None
     with path.open(encoding='utf-8-sig', newline='') as f:
-        return list(csv.DictReader(f)), path.stat().st_mtime
+        rows = list(csv.DictReader(f))
+        for row in rows:
+            if 'start_date' not in row:
+                row.update(extract_dates(row.get('dates', '')))
+        return rows, path.stat().st_mtime
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -42,7 +48,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?')[0]
         if path == '/api/courses':
             try:
-                rows, updated = read_courses()
+                source = parse_qs(urlsplit(self.path).query).get("source", ["main"])[0]
+                rows, updated = read_courses(source)
                 payload = {'courses': rows, 'updated': updated}
                 self.reply(json.dumps(payload, ensure_ascii=False).encode(), 'application/json; charset=utf-8')
             except (OSError, ValueError) as e:
