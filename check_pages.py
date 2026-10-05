@@ -13,6 +13,7 @@ from urllib.parse import urljoin, urlsplit, parse_qs
 
 import requests
 from bs4 import BeautifulSoup
+from course_dates import extract_dates, extract_price
 
 URL = 'https://www.alpenverein-muenchen-oberland.de/alpinprogramm'
 HOME = Path(__file__).resolve().parent
@@ -69,6 +70,7 @@ def parse_page(soup, url):
         status = entry.select_one('.tour-status')
         rows.append({'course': title or heading, 'dates': dates,
                      'location': text(entry.select_one('.tour-title__headline')),
+                     **extract_dates(dates), **extract_price(entry),
                      'code': code, 'status': text(status) or (' '.join(status.get('class', [])) if status else 'unknown'),
                      'url': link})
     return children, rows
@@ -146,7 +148,7 @@ def main():
                 state = json.loads(STATE.read_text()) if STATE.exists() else {}
                 soup = fetch(session, URL)
                 current = signature(soup)
-                if force or state.get('signature') != current:
+                if force or state.get('signature') != current or state.get('schema_version') != 2:
                     baseline = not state
                     print('Creating initial course list.' if baseline else 'Programme announcement or category counts changed. Refreshing courses.')
                     rows = collect(session, soup)
@@ -167,7 +169,7 @@ def main():
                     else:
                         print(f'List refreshed: {len(rows)} dated events. No newly listed dates.')
                     temp = STATE.with_suffix('.tmp')
-                    temp.write_text(json.dumps({'signature': current, 'course_urls': [r['url'] for r in rows], 'checked': datetime.now().isoformat()}))
+                    temp.write_text(json.dumps({'schema_version': 2, 'signature': current, 'course_urls': [r['url'] for r in rows], 'checked': datetime.now().isoformat()}))
                     temp.replace(STATE)
                     force = False
                 else:
