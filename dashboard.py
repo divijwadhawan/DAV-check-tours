@@ -9,6 +9,24 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+TEST_LOCK = threading.Lock()
+TEST = {"status": "idle"}
+
+
+def winter_test():
+    try:
+        result = subprocess.run([sys.executable, "-u", str(ROOT / "check_pages.py"), "--test-winter"], capture_output=True, text=True, timeout=1800)
+        if result.returncode:
+            update = {"status": "error", "message": (result.stdout + result.stderr)[-1200:]}
+        else:
+            with (ROOT / "output/winter_test.csv").open(encoding="utf-8-sig", newline="") as f:
+                count = len(list(csv.DictReader(f)))
+            update = {"status": "success", "count": count, "message": f"Winter test passed: {count} published course dates extracted. This is a test, not a new-programme alert."}
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        update = {"status": "error", "message": f"Winter test failed: {e}"}
+    with TEST_LOCK:
+        TEST.clear()
+        TEST.update(update)
 
 
 def read_courses():
@@ -29,6 +47,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(json.dumps(payload, ensure_ascii=False).encode(), 'application/json; charset=utf-8')
             except (OSError, ValueError) as e:
                 self.reply(json.dumps({'error': str(e)}).encode(), 'application/json', 503)
+        elif path == '/api/winter-test':
+            with TEST_LOCK:
+                payload = json.dumps(TEST).encode()
+            self.reply(payload, 'application/json')
+        elif path == '/winter_test.csv':
+            file = ROOT / 'output/winter_test.csv'
+            self.reply(file.read_bytes(), 'text/csv; charset=utf-8') if file.exists() else self.reply(b'No winter test export yet', 'text/plain', 404)
         elif path in ('/', '/index.html'):
             self.reply((ROOT / 'dashboard.html').read_bytes(), 'text/html; charset=utf-8')
         elif path == '/courses.csv':
@@ -36,6 +61,21 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(file.read_bytes(), 'text/csv; charset=utf-8') if file.exists() else self.reply(b'First scan is still running.', 'text/plain', 404)
         else:
             self.reply(b'Not found', 'text/plain', 404)
+
+    def do_POST(self):
+        if self.path != "/api/winter-test":
+            return self.reply(b"Not found", "text/plain", 404)
+        # Only the local dashboard may trigger a scan; no arbitrary target URL.
+        expected = f"http://127.0.0.1:{self.server.server_port}"
+        if self.headers.get("Origin") != expected:
+            return self.reply(b"Invalid origin", "text/plain", 403)
+        with TEST_LOCK:
+            if TEST.get("status") != "running":
+                TEST.clear()
+                TEST.update(status="running", message="Reading winter categories and course dates. This can take several minutes.")
+                threading.Thread(target=winter_test, daemon=True).start()
+            payload = json.dumps(TEST).encode()
+        self.reply(payload, "application/json", 202)
 
     def reply(self, body, content_type, status=200):
         self.send_response(status)
