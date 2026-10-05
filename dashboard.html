@@ -7,6 +7,7 @@
 </style>
 <main>
 <header><div><div class="eyebrow">DAV München & Oberland · local monitor</div><h1>Find your next mountain day.</h1><p>Browse published courses, tours and their dates.</p></div><a class="download" href="/courses.csv" download="dav-courses.csv">Download CSV ↓</a></header>
+<section style="background:white;border:1px solid #dbe6df;border-radius:14px;padding:20px;margin-top:24px"><strong>Check the monitor with the winter programme</strong><p>Scan the current winter page using the same course parser. Your main programme baseline stays intact.</p><button id="winter-test">Test winter programme</button> <a id="winter-download" href="/winter_test.csv" download hidden>Download winter test CSV</a><p id="winter-status" role="status">Ready to test.</p></section>
 <div class="metrics"><div class="metric"><strong id="total">—</strong><span>Published dates</span></div><div class="metric"><strong id="types">—</strong><span>Course titles</span></div><div class="metric"><strong id="shown">—</strong><span>Matching dates</span></div></div>
 <div class="filters"><label>Search courses or locations<input id="search" type="search" placeholder="Hochtouren, Klettern, Tirol…"></label><label>Course<select id="course"><option value="">All courses</option></select></label><label>Date contains<input id="date" placeholder="e.g. 07.27 or 2027"></label></div>
 <div class="toolbar"><span id="status" role="status">Waiting for the first course export…</span><button id="reset">Clear filters</button></div>
@@ -38,6 +39,8 @@ async function refresh(){try{const response=await fetch('/api/courses');if(!resp
  const selection=$('course').value;$('course').replaceChildren(new Option('All courses',''),...titles.map(t=>new Option(t,t)));$('course').value=titles.includes(selection)?selection:'';
  $('status').textContent=updated?'List updated '+new Date(updated*1000).toLocaleString():'Waiting for the first course export…';render();
  }catch(e){$('status').textContent='Dashboard cannot refresh. Last loaded list is still shown.';}}
+async function testStatus(){try{const r=await fetch('/api/winter-test');if(!r.ok)throw Error();const data=await r.json();$('winter-test').disabled=data.status==='running';$('winter-status').textContent=data.message||'Ready to test.';$('winter-download').hidden=data.status!=='success';}catch{$('winter-status').textContent='Could not read test status. Is the dashboard server running?';}}
+$('winter-test').onclick=async()=>{try{$('winter-test').disabled=true;const r=await fetch('/api/winter-test',{method:'POST'});if(!r.ok)throw Error();await testStatus();}catch{$('winter-test').disabled=false;$('winter-status').textContent='Could not start winter test.';}};testStatus();setInterval(testStatus,3000);
 for(const id of ['search','course','date'])$(id).addEventListener('input',render);
 $('reset').onclick=()=>{for(const id of ['search','course','date'])$(id).value='';render();};refresh();setInterval(refresh,15000);
 </script>
